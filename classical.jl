@@ -2,8 +2,20 @@ module Classical
 using LinearAlgebra
 #using StaticArrays
 
+"""
+visco()
+
+Implements a power-law dependence for the viscosity ν on the surface density Σ,
+
+    ν = ν₀(Σ/Σ₀)ᵝ
+
+following Grätz, Seiß & Spahn (2018).
+"""
 function visco(Σrel,β)
-    return Diagonal(Σrel.^β)
+    THRESH = 0.01 # Thresholding allows us to use β<0, which would otherwise lead to infinities.
+    threshold(Σ) = Σ > THRESH ? Σ : THRESH
+    Σr = threshold.(Σrel)
+    return Diagonal(Σr.^β)
 end
 
 """
@@ -26,8 +38,7 @@ mutable struct ring
     σ_::Array{Float64,1}
     Gᵐ::Any # Tridiagonal
 #    μ_::Array{Float64,1}
-#    ν_::Array{Float64,1}
-
+#    νᵐ::Any
 end
 function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
     xtemp_ = collect(range(xi,xf,length=N+1))
@@ -44,7 +55,7 @@ function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
     Ksub = zeros(N-1)
     Kᵐ = Tridiagonal(Ksub,Kdiag,Ksuper)
     Dᵐ = Tridiagonal(ones(N-1),-ones(N),zeros(N-1))
-    Gᵐ = Dᵐ * Kᵐ * νᵐ
+    Gᵐ = 3 * Dᵐ * Kᵐ * νᵐ
     μ_ = Mᵐ * σ_ # mass (per azimuthal length) in annulus
     ΔtVN = 0.5 * minimum(diff(X_).^2 ./ diag(νᵐ)[1:end-1] )
     ΔtADV = minimum(ΔX_ ./ U_)
@@ -52,11 +63,18 @@ function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
     return ring(N,β,ΔtMAX,X_,ΔX_,U_,x_,σ_,Gᵐ)#,μ_)
 end
 
-#=
-function adjust!(r::ring)
 
+function adjust!(r::ring)
+    νᵐ = visco(r.σ_,r.β)
+    Kdiag = [1.0 ./ diff(r.x_)..., 0.0]
+    Ksuper = -Kdiag[1:end-1]
+    Ksub = zeros(r.N-1)
+    Kᵐ = Tridiagonal(Ksub,Kdiag,Ksuper)
+    Dᵐ = Tridiagonal(ones(r.N-1),-ones(r.N),zeros(r.N-1))
+    Gᵐ = 3 * Dᵐ * Kᵐ * νᵐ
+    r.Gᵐ = Gᵐ
 end
-=#
+
 
 function advect!(r::ring;Δt=r.ΔtMAX)
     σ = r.σ_; U = r.U_;; ΔX = r.ΔX_
@@ -71,8 +89,14 @@ function diffuse!(r::ring;Δt=r.ΔtMAX,α=0.5)
     Bᵐ = I(N) + (1-α) * Δt * Gᵐ
     # Solve:
     r.σ_ = Aᵐ \ (Bᵐ * r.σ_)
-    r.σ_[1]   = 0.0
+#    r.σ_[1]   = 0.0
     r.σ_[end] = 1.0
+end
+
+function iterate!(r::ring;Δt=r.ΔtMAX,α=0.5)
+    adjust!(r)
+    diffuse!(r;Δt=Δt,α=α)
+    advect!(r;Δt=Δt)
 end
 
 end#module

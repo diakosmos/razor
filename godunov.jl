@@ -21,8 +21,8 @@ mutable struct ring
     U_::Array{Float64,1}    # velocity (on nodes)
     Σ_::Array{Float64,1}    # surface density
     J_::Array{Float64,1}    # mass flux
-    r₊::Array{Float64,1}    # array of 2-component eigenvectors, right-travelling wave (relative to fluid)
-    r₋::Array{Float64,1}    # array of 2-component eigenvectors, left-travelling wave (relative to fluid)
+    r₊::Array{Float64,1}    # 2-component eigenvector, right-travelling wave (relative to fluid) [NB: independent of position]
+    r₋::Array{Float64,1}    # 2-component eigenvector, left-travelling wave (relative to fluid) [NB: independent of position]
     λ₊::Array{Float64,1}    # eigenvalues, right-travelling (relative to fluid) wave
     λ₋::Array{Float64,1}    # eigenvalues, left-travelling (relative to fluid) wave
     Λ₊R::Any                # diagonal matrix of eigenvalues, Right-travelling (absolute) right-travelling (relative)
@@ -33,38 +33,40 @@ mutable struct ring
     α⁻::Array{Float64,1}    #
 end
 function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
+    function setEs(U_::Array{Float64,1})
+        N = length(U_)
+        r₊ = [1.0, √q]
+        r₋ = [1.0,-√q]
+        λ₊ = zeros(N)
+        λ₋ = zeros(N)
+        for i in 1:N
+            λ₊[i] = U_[i] + √q
+            λ₋[i] = U_[i] - √q
+        end
+        Λ₊R = Diagonal(λ₊ .* (λ₊ .> 0))
+        Λ₊L = Diagonal(λ₊ .* (λ₊ .< 0))
+        Λ₋R = Diagonal(λ₋ .* (λ₋ .> 0))
+        Λ₋L = Diagonal(λ₋ .* (λ₋ .< 0))
+        return (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L)
+    end
     xtemp_ = collect(range(xi,xf,length=N+1))
     X_ = xtemp_[2:end]
     ΔX_ = diff(xtemp_)
     U_ = 1.0 ./ X_.^4
     Σ_ = ones(N); Σ_[1] = 0.0
     J_ = zeros(N)
-    (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₊L) = setEs(U_)
-    Δt = 0.5 / max( maximum(abs.(λ₊./ΔX_)), maximum(abs.(λ₋./ΔX_)))
+    (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L) = setEs(U_)
+    FUDGE = 0.1
+    Δt = 0.5 / max( maximum(abs.(λ₊./ΔX_)), maximum(abs.(λ₋./ΔX_))) * FUDGE
     α⁺=zeros(N)
     α⁻=zeros(N)
-    return ring(N,β,Δt,X_,ΔX_,U_,Σ_,J_,r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₊L,α⁺,α⁻)
+    return ring(N,β,Δt,X_,ΔX_,U_,Σ_,J_,r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L,α⁺,α⁻)
 end
 
 """
 getR(): get right eigenvectors (two 2-component vectors), and eigenvalues (2*N).
 """
-function setEs(U_::Array{Float64,1})
-    N = length(U_)
-    r₊ = [1.0, √q]
-    r₋ = [1.0,-√q]
-    λ₊ = zeros(N)
-    λ₋ = zeros(N)
-    for i in 1:N
-        λ₊[i] = U_[i] + √q
-        λ₋[i] = U_[i] - √q
-    end
-    Λ₊R = Diagonal(λ₊ .* (λ₊ .> 0))
-    Λ₊L = Diagonal(λ₊ .* (λ₊ .< 0))
-    Λ₋R = Diagonal(λ₋ .* (λ₋ .> 0))
-    Λ₋L = Diagonal(λ₋ .* (λ₋ .< 0))
-    return (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L)
-end
+
 
 function getAlphas(r::ring)
     N = r.N; Σ_ = r.Σ_; J_ = r.J_; α⁺ = r.α⁺; α⁻ = r.α⁻
@@ -84,9 +86,12 @@ end#function
 
 function step!(r::ring)
     getAlphas(r)
-    Δt=r.Δt; Σ_=r.Σ_; α⁺=r.α⁺; α⁻=r.α⁻;
-    Λ₊L=r.Λ₊L; Λ₊R=r.Λ₊R
-    Σ_[1:end-1] += Δt * α⁻ .* λ₋
+    Δt=r.Δt; Σ_=r.Σ_; J_=r.J_; α⁺=r.α⁺; α⁻=r.α⁻; r₋=r.r₋; r₊=r.r₊
+    Λ₊L=r.Λ₊L; Λ₊R=r.Λ₊R; Λ₋L=r.Λ₋L; Λ₋R=r.Λ₋R
+    Σ_[1:end  ] += Δt * ((Λ₋L * α⁻ * r₋[1]) + (Λ₊L * α⁺ * r₊[1]))[1:end  ]
+    Σ_[2:  end] += Δt * ((Λ₋R * α⁻ * r₋[1]) + (Λ₊R * α⁺ * r₊[1]))[1:end-1]
+    J_[1:end  ] += Δt * ((Λ₋L * α⁻ * r₋[2]) + (Λ₊L * α⁺ * r₊[2]))[1:end  ]
+    J_[2:  end] += Δt * ((Λ₋R * α⁻ * r₋[2]) + (Λ₊R * α⁺ * r₊[2]))[1:end-1]
 end
 
 end#module

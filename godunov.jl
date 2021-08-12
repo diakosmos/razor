@@ -83,7 +83,10 @@ function getAlphas(r::ring)
 end#function
 
 function step!(r::ring)
-    
+    getAlphas(r)
+    Δt=r.Δt; Σ_=r.Σ_; α⁺=r.α⁺; α⁻=r.α⁻;
+    Λ₊L=r.Λ₊L; Λ₊R=r.Λ₊R
+    Σ_[1:end-1] += Δt * α⁻ .* λ₋
 end
 
 end#module

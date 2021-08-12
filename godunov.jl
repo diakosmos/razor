@@ -13,24 +13,24 @@ q = 3*ν/s
 A planetary particulate disk is called a "ring", but this terminology is confusing.
 """
 mutable struct ring
-    N::Integer # number of cells
-    β::Float64 # power-law index for viscosity
-    Δt::Float64
-    X_::Array{Float64,1}
-    ΔX_::Array{Float64,1}
-    U_::Array{Float64,1}
-    Σ_::Array{Float64,1}
-    J_::Array{Float64,1}
-    r₊::Array{Float64,1}
-    r₋::Array{Float64,1}
-    λ₊::Array{Float64,1}
-    λ₋::Array{Float64,1}
-    Λ₊R::Any
-    Λ₊L::Any
-    Λ₋R::Any
-    Λ₋L::Any
-    α⁺::Array{Float64,1}
-    α⁻::Array{Float64,1}
+    N::Integer              # number of cells
+    β::Float64              # power-law index for viscosity
+    Δt::Float64             # time step
+    X_::Array{Float64,1}    # positions (nodes)
+    ΔX_::Array{Float64,1}   # cell sizes (cell)
+    U_::Array{Float64,1}    # velocity (on nodes)
+    Σ_::Array{Float64,1}    # surface density
+    J_::Array{Float64,1}    # mass flux
+    r₊::Array{Float64,1}    # array of 2-component eigenvectors, right-travelling wave (relative to fluid)
+    r₋::Array{Float64,1}    # array of 2-component eigenvectors, left-travelling wave (relative to fluid)
+    λ₊::Array{Float64,1}    # eigenvalues, right-travelling (relative to fluid) wave
+    λ₋::Array{Float64,1}    # eigenvalues, left-travelling (relative to fluid) wave
+    Λ₊R::Any                # diagonal matrix of eigenvalues, Right-travelling (absolute) right-travelling (relative)
+    Λ₊L::Any                # diagonal matrix of eigenvalues, Left-travelling (absolute) right-travelling (relative)
+    Λ₋R::Any                #
+    Λ₋L::Any                #
+    α⁺::Array{Float64,1}    #
+    α⁻::Array{Float64,1}    #
 end
 function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
     xtemp_ = collect(range(xi,xf,length=N+1))

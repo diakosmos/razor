@@ -68,7 +68,7 @@ getR(): get right eigenvectors (two 2-component vectors), and eigenvalues (2*N).
 """
 
 
-function getAlphas(r::ring)
+function getAlphas!(r::ring)
     N = r.N; Σ_ = r.Σ_; J_ = r.J_; α⁺ = r.α⁺; α⁻ = r.α⁻
     for i in 1:N
         if i < N
@@ -85,7 +85,7 @@ function getAlphas(r::ring)
 end#function
 
 function step!(r::ring)
-    getAlphas(r)
+    getAlphas!(r)
     Δt=r.Δt; Σ_=r.Σ_; J_=r.J_; α⁺=r.α⁺; α⁻=r.α⁻; r₋=r.r₋; r₊=r.r₊
     Λ₊L=r.Λ₊L; Λ₊R=r.Λ₊R; Λ₋L=r.Λ₋L; Λ₋R=r.Λ₋R
     Σ_[1:end  ] += Δt * ((Λ₋L * α⁻ * r₋[1]) + (Λ₊L * α⁺ * r₊[1]))[1:end  ]

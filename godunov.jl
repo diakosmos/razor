@@ -5,8 +5,8 @@ using LinearAlgebra
     For now, we assume a constant (fixed) viscosity "ν".
 """
 
-ν = 100.0
-s = 1.0 # relaxation time
+ν = 0.01 / 3
+s = 0.01 # relaxation time
 q = 3*ν/s
 
 """
@@ -33,7 +33,7 @@ mutable struct ring
     α⁻::Array{Float64,1}    #
     t::Float64              # time
 end
-function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
+function ring(N=5;β=0,xf=3.0,xi=0.01,vfield="standard")#10*xf/N)
     function setEs(U_::Array{Float64,1})
         N = length(U_)
         r₊ = [1.0, √q]
@@ -50,11 +50,20 @@ function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
         Λ₋L = -Diagonal(λ₋ .* (λ₋ .< 0))
         return (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L)
     end
+    """ in progress.... """
+    function setU(U_,X_,vfield)
+        if vfield=="standard"
+            U_ = 1.0 ./ X_.^4
+        elseif vfield=="still"
+            U_ *= 0.0
+        end
+    end
     xtemp_ = collect(range(xi,xf,length=N+1))
     X_ = xtemp_[2:end]
     ΔX_ = diff(xtemp_)
     U_ = 1.0 ./ X_.^4
-    Σ_ = ones(N); Σ_[1] = 0.0
+    #U_ *= 0.0;
+    Σ_ = ones(N); Σ_[1] = 0.0; # Σ_[1:(2*N÷5)] .= 0.0; Σ_[(3*N÷5):end] .= 0.0
     J_ = zeros(N)
     (r₊,r₋,λ₊,λ₋,Λ₊R,Λ₊L,Λ₋R,Λ₋L) = setEs(U_)
     FUDGE = 0.1
@@ -92,7 +101,7 @@ function step!(r::ring)
     Δt=r.Δt; Σ_=r.Σ_; J_=r.J_; α⁺=r.α⁺; α⁻=r.α⁻; r₋=r.r₋; r₊=r.r₊
     Λ₊L=r.Λ₊L; Λ₊R=r.Λ₊R; Λ₋L=r.Λ₋L; Λ₋R=r.Λ₋R
     N = length(Σ_)
-
+    """ LHS: """
     Σ_[1:end  ] += Δt * ((Λ₋L * α⁻ * r₋[1])                     )[1:end  ]
     Σ_[1:end  ] += Δt * (                     (Λ₊L * α⁺ * r₊[1]))[1:end  ]
     Σ_[2:  end] += Δt * (-(Λ₋R * α⁻ * r₋[1])                     )[1:end-1]
@@ -125,6 +134,10 @@ function step!(r::ring)
     r.J_[i] = J_[i]
     end
     =#
+    """ RHS: """
+
+    J_[1:end] -= Δt * J_[1:end] / s # forwards Euler
+
     r.t += Δt
 end
 

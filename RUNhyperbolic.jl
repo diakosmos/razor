@@ -10,8 +10,8 @@ Np = 6400000 # how often to plot
 Ns = 5000 # when to start plotting
 """
 NN = 100 # no of cells
-Nt = 640000 # no of time steps
-Np = 64000 # how often to plot
+Nt = 8000 # no of time steps
+Np = 1000 # how often to plot
 Ns = 1#5000 # when to start plotting
 
 

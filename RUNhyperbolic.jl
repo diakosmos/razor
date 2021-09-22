@@ -13,8 +13,8 @@ NN = 40 # no of cells
 #Nt = 8000 # no of time steps
 #Np = 1000 # how often to plot
 #Ns = 1#5000 # when to start plotting
-tmax = 1.0e2 # max time
-dt = 1.0e1 # how often to plot
+tmax = 1.0e3 # max time
+dt = 1.0e2 # how often to plot
 tp = 0.0e0#5000 # when to start plotting
 
 
@@ -27,8 +27,8 @@ for tt in 0.0:dt:tmax
         Plots.plot!(r.X_[1:NN÷1],r.Σ_[1:NN÷1],label="t: $tx",legend=false,xlim=(0,3))#:bottomright)#,title="Σ")#;legend=false)
         display(fig)
         print("time: $tx\n")
-#        Plots.plot!(r.X_[1:NN÷1],r.Φ_[1:NN÷1],label=false,linestyle=:dash)#,label="t: $t",legend=:topleft)#,title="J")#;legend=false)
-#        display(fig)
+        Plots.plot!(r.X_[1:NN÷1],r.Φ_[1:NN÷1],label=false,linestyle=:dash)#,label="t: $t",legend=:topleft)#,title="J")#;legend=false)
+        display(fig)
     end
 #    for j in 1:800
         Godunov.step!(r)#,dt)

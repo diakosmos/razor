@@ -9,7 +9,7 @@ TINY = 0.5 # how much to shink the timestep
 
 α = 1.0
 ν = 1.0
-s = 1.0 # relaxation time
+s = 0.1 # relaxation time
 q = 3*ν/s
 xv = (α/(3ν))^(1.0/3.0)
 xh = (α/√q)^0.25
@@ -70,6 +70,7 @@ function ring(N=5;xi=(0.5*min(xv,xh)),xf=(3.0*max(xv,xh)))
     X_ = collect(range(xi^y,xf^y,length=N+1)).^x
     ΔX_ = diff(X_)
     U_ = α ./ X_.^4
+    U_ .-= U_[end]
     #U_ .= -1.5
     ∇U_ = diff(U_) ./ ΔX_
 
@@ -79,6 +80,8 @@ function ring(N=5;xi=(0.5*min(xv,xh)),xf=(3.0*max(xv,xh)))
     Φ_ = Σ_ .* (U_[1:end-1]+U_[2:end])/2.0  .* 0.0
 
     S_ = Σ_ .* ΔX_
+    S_ ./= sum(S_)
+    Σ_ = S_ ./ ΔX_
     F_ = Φ_ .* ΔX_
 
     (r₊,r₋,λ₊,λ₋) = setEs(U_)
@@ -94,8 +97,8 @@ end
 
 function getAlphas!(r::ring)
     N = r.N; Σ_ = r.Σ_; Φ_ = r.Φ_; α⁺ = r.α⁺; α⁻ = r.α⁻
-    ΔΣ_ = cat(Σ_[1]-Σ_lbc, diff(Σ_), Σ_rbc-Σ_[end], dims=1)
-    ΔΦ_ = cat(Φ_[1]-Φ_lbc, diff(Φ_), Φ_rbc-Φ_[end], dims=1)
+    ΔΣ_ = cat(Σ_[1]-Σ_lbc, diff(Σ_),        0.0, dims=1) # reflective bc on rt
+    ΔΦ_ = cat(Φ_[1]-Φ_lbc, diff(Φ_), -2*Φ_[end], dims=1) # reflective bc w/sign flip
     for i in 1:(N+1)
         α⁺[i] = 0.5 * [1  1/√q] ⋅ [ΔΣ_[i], ΔΦ_[i]]
         α⁻[i] = 0.5 * [1 -1/√q] ⋅ [ΔΣ_[i], ΔΦ_[i]]
@@ -131,8 +134,8 @@ function step!(r::ring; Δt=r.Δt)
     Φ_[end] = Φ_rbc
 
     #Σ_ += -Δt * r.∇U_ .* Σ_ # <- forward Euler
-
-    Σ_ ./= (1 .+ Δt*r.∇U_/10)  # <- backward Euler  - conserves a bit better
+    Σ_ .*= (1 .- Δt*r.∇U_)
+    #Σ_ ./= (1 .+ Δt*r.∇U_)  # <- backward Euler  - conserves a bit better
     #Σ_ .*= (1 .- Δt*r.∇U_)
     #Φ_ ./= (1 .+ Δt*r.∇U_ .+ Δt/s)
     Φ_ ./= (1 .+ Δt/s)
@@ -151,20 +154,20 @@ function step!(r::ring; Δt=r.Δt)
     # massaging.
     # 1. make sign uniform
 #    Σ_ = abs.(S_); Φ_ = -abs.(Φ_)
-    # 2. make monotonic
+#=    # 2. make monotonic
     for i in 2:N
         Σ_[i] = max(Σ_[i-1],Σ_[i])
 #        Φ_[i] = min(Φ_[i-1],Φ_[i])
     end
-    Σ_ /= maximum(Σ_)
+#    Σ_ /= maximum(Σ_)
 # =#
 #    Σ_[7] = 0.0
-    r.Σ_ = Σ_; r.Φ_ = Φ_
+
     S_ = Σ_ .* ΔX_; F_ = Φ_ .* ΔX_
-    r.S_ = S_
-#    r.Σ_ = S_ ./ ΔX_
-    r.Φ_ = Φ_
-    r.F_ = F_  #Φ_ ./ ΔX_
+    r.S_ = S_ ./ sum(S_)
+    r.F_ = F_ ./ sum(S_) # yes, sum(S_), not sum(F_)
+    r.Σ_ = r.S_ ./ ΔX_
+    r.Φ_ = r.F_ ./ ΔX_
 
     r.t += Δt
     r.i += 1

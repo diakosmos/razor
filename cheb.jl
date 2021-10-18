@@ -71,23 +71,23 @@ function chebdif(N::Integer,M::Integer)
 
     s = size(D)
     DM = zeros(s...,M)
-#    De = zeros(n1,n1,M)
-#    Do = zeros(n1,n1,M)
-#    (Peve,Podd) = projmat(N)
+    De = zeros(n2,n2,M)
+    Do = zeros(n2,n2,M)
+    (Pe,Po,Qe,Qo) = projmat(N)
 
     for ell in 1:M
         D = ell * Z .* (C .* repeat(diag(D),1,N) - D)
         D[L] = -sum(D,dims=2)
         DM[:,:,ell] = D
-#=        if ell%2 == 0
-            De[:,:,ell] = Podd * D * 2Peve'
-            Do[:,:,ell] = Peve * D * 2Podd'
-        else
-            De[:,:,ell] = Peve * D * 2Peve'
-            Do[:,:,ell] = Podd * D * 2Podd'
-        end =#
+        if ell%2 == 0 # 2nd, 4th, 6th etc derivatives do not change parity
+            De[:,:,ell] = Pe * D * Qe
+            Do[:,:,ell] = Po * D * Qo
+        else # 1st, 3rd, 5th etc derivatives change parity
+            De[:,:,ell] = Po * D * Qe
+            Do[:,:,ell] = Pe * D * Qo
+        end
     end
-    return (x,DM)#,De,Do)
+    return (x,DM,De,Do)
 end
 
 """

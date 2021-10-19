@@ -1,169 +1,202 @@
 module rings
 using LinearAlgebra, DSP
-#include("..\\cheb.jl")
 include("cheb.jl")
 using .cheb
 export ring
 
+"""
+UNITS: cgs
 
 """
-Σ is an even function of x
-Φ is an odd function of x
-U is an odd function of x
-"""
+
+ASSERT = true # for debugging purposes: include "@assert" statements
 
 # Consts
 G  = 6.67430e-8 # Gravitational constant, cgs
-M♄ = 5.6834e29  # Saturn, in grams
+M♄ = 5.6834e29  # mass of Saturn, in grams
 A₁ = 6.7187     # Goldreich-Tremaine constant
 Mm = 1.0e8      # Megameter. Typical orbit is 100Mm.
 
-Pan     = (4.95e19, 1.33584e10) # mass, orbital radius of Pan (Encke gap)
-Daphnis = (8.40e16, 1.36504e10) # mass, orbital radius of Daphnis (Keeler gap)
+# Some fiducial satellites, for reference:
+Pan  = (4.95e19, 1.33584e10) # (mass, orbital radius) of Pan (Encke gap)
+Daph = (8.40e16, 1.36504e10) # (mass, orbital radius) of Daphnis (Keeler gap)
 
-mutable struct ring # an abstract, idealized 1D (in r) ring, with periodic BC's and a single forcing moon
-    X::Float64  # THE key nondimensional parameter.
-    ξ₀::Float64 # the other key non-dimensional parameter: sets the size of the domain (in dim'less units)
-    N::Integer  # number of nodes for a full ring
-    β::Float64 # exponent
-    nn::Integer # half-ring
-    wr::Any
-    ξ::Any
-    Ξ::Any
-    σ::Any
+"""
+"aring" is an abstract, idealized 1D (in r, i.e. in x) ring, with periodic b.c.
+in the approximation that Δr ≪ r, and with a single mass forcing a gap.
+
+- velocity is normalized to the diffusive wave speed √(κ₀/s₀)
+- position is normalized to the critical lengthscale, Lcrit
+- density Σ is normalized to the fiducial density Σ₀:  σ ≡ Σ/Σ₀
+- the periodic bc includes prescription that σ = 1 at the midpoint
+"""
+
+struct chebars
+    yf::Array{Float64}
+    y::Array{Float64}
+    D1::Array{Float64,2}
+    De::Array{Float64,2}
+    Do::Array{Float64,2}
+end
+
+mutable struct aring # an abstract, idealized 1D (in r) ring, with periodic BC's and a single forcing moon
+    X₀::Float64  # THE key nondimensional parameter.
+    ℓ₀::Float64  # The other non-dimensional parameter: sets the size of the domain (in units of Lcrit).
+    #
+    N::Integer   # number of nodes for a full ring
+    nn::Integer  # number of nodes for a half-ring (N÷2 + N%2)
+    #
+    #ξ::Array{Float64}  # position x normalized to Lcrit
+    #Ξ::Array{Float64}  # position x normalized to Lvisc
+    #
+    β::Float64 # exponent for σ-dependence of viscosity (and diffusivity)
+    γ::Float64 # exponent for σ-dependence of relaxation rate 1/s
+    #
+    chArs::chebars # Tuple of chebdif arrays
+    #
+    w::Array{Float64}
+    σ::Array{Float64}
     Ar::Any
     a::Any
     Br::Any
     b::Any
-    γ::Float64
 end
-function ring(X₀,ξ₀,N,β=0.0,γ=0.0;h=0.0)
-    @assert X₀ > 2^24 # 2^24 is critical value for X; below this, the method does not apply
-    @assert ξ₀ > 3   # needs to be greater than a few; this is a bit of a fuzzy boundary, but certainly >3, I believe.
-    ξvisc = X₀^(1/24)
+
+"""
+Functions for getting "A" matrix and "a" vector.
+"""
+function getA(De,σ,w,β,γ)#;hrel=0.0)
+    A  = diagm((1+β)*σ.^(β+γ) .- w.^2) * De
+    Ar = A[:,2:end-1]
+    a  = A[:,end]
+    return (Ar,a)
+end
+function getA!(r::aring)
+    (r.Ar,r.a) = getA( r.chArs.De , r.σ , r.w , r.β , r.γ )
+end
+
+"""
+Functions for getting "B" matrix and "b" vector.
+"""
+function getB(Do,σ,w,γ,ℓ₀,τ)
+    # Get B1.
+    B1 = diagm(w.*σ.^γ) ./ (ℓ₀-1) ./ τ
+    B1r = B1[:,2:end-1]
+    b1  = B1[:,end]
+    # And B2.
+    B2 = 2 * diagm(w) * diagm(Do*w)
+    B2r = B2[:,2:end-1]
+    b2  = B2[:,end]
+    # Combine
+    Br = B1r + B2r
+    b  = b1  + b2
+    # And return:
+    return (Br,b)
+end
+function getB!(ar::aring)
+    τ = ar.X₀^(-1/8)
+    (ar.Br, ar.b) = getB( ar.chArs.Do , ar.σ , ar.w , ar.γ , ar.ℓ₀, τ)
+end
+
+"""
+Functions for setting the normalized velocity "w".
+    hrel is the Hill radius relative to Lcrit.
+"""
+function getw(y,ℓ₀ ; hrel=0.0) # -1 ≤ y ≤ 1
+    if ASSERT
+        @assert -1 ≤ y ≤ 1
+        @assert hrel ≥ 0.0
+    end
+    ξL = y * (ℓ₀-1) + ℓ₀ #  1 ≤ ξL = position relative to mass on left  (dim'less)
+    ξR = y * (ℓ₀-1) - ℓ₀ # -1 ≥ ξR = position relative to mass on right (dim'less)
+    # In principle, we should consider a mass at ..., -4L₀, -2L₀, 0, 2L₀, 4L₀, ...,
+    #    but honestly, that's overkill in all situations of interest I can think of here.
+    # We could also test here whether |ξL| > 2.5*hrel and |ξR| > 2.5*hrel, but we don't, b/c
+    #   we might want to violate that in the early stages of an iterative solution.
+    # That condition should be tested elswhere, however.
+    if hrel ≈ 0.0
+        return ξL^-4 - ξR^-4
+    else
+        aa = 0.711557; bb = -7.58607 # Constants given by Grätz, Seiß & Spahn (2018), p. 3.
+        function g(hox)
+            min(1/2.5,abs(hox))
+        end
+        function f(hox)
+            (1+ aa*g(hox) + bb*g(hox)^2)^(-1)
+        end
+        function ww(ξ)
+            sign(ξ)/ξ^4 * f(hrel/ξ)
+        end
+        wL = ww(ξL)
+        wR = ww(ξR)
+        return wL + wR
+    end
+end
+function getw!(ar::aring ; hrel::Real=0.0)
+    ar.w = getw.(ar.chArs.y,ar.ℓ₀;hrel)
+    #ar.w = w[1:ar.nn]
+end
+
+function iterate!(ar::aring; hrel=0.0)
+    getw!(ar; hrel)
+    getA!(ar)
+    getB!(ar)
+    # Solve:
+    nn= ar.nn
+    print(size(ar.Ar))
+    @assert size(ar.Ar) == (nn,nn-2)
+    @assert size(ar.a) == (nn,)
+    @assert size(ar.Br) == (nn,nn-2)
+    @assert size(ar.b) == (nn,)
+    σ = (ar.Ar - ar.Br) \ (ar.b - ar.a)
+    ar.σ = [0, σ..., 1]
+    #ar.σ = σ
+    #
+    return 0
+end
+
+"""
+Normal function to initialize an instance of "aring".
+"""
+function aring(X₀,ℓ₀,N,β,γ; hrel=0.0) # h is the Hill radius in units of Lcrit
+    if ASSERT
+        @assert X₀ > 2^24           # 2^24 is critical value for X; below this, the method does not apply
+        @assert ℓ₀ > 3              # L0/Lcrit needs to be greater than a few; this is a bit of a fuzzy boundary, but certainly > 3.
+        @assert ℓ₀ * X₀^(1/24) > 3  # Same for L0/Lvisc; this makes the above line redundant, I know - kept as a mnemonic
+    end
     #
     # Find nn, which is half of N, since we treat only half the domain.
     # (Why not just specify nn to start? So we can test/try both odd and even N for the full domain.)
     nn = N÷2 + N%2 # nn: "non-negative" (positions)
     #
     # Get collocation points and differentiation matrices
-    (y,DM,DeM,DoM) = chebdif(N,1)
-    D1 = DM[:,:,1]   # full derivative matrix
-    De = DeM[:,:,1]  # derivative of even function
-    Do = DoM[:,:,1]  # derivative of odd function
+    # Note that y, D1, De, and Do operate on the domain -1 ≤ y ≤ 1. Need to normalize to -ℓ₀ ≤ ξ ≤ ℓ₀.
+    (yf,DM,DeM,DoM) = chebdif(N,1)
+    D1 = DM[:,:,1]   # full derivative matrix (N x N)
+    y = yf[1:nn]
+    De = DeM[:,:,1]   # derivative of even functions (nn x nn)
+    Do = DoM[:,:,1]   # derivative of odd functions (nn x nn)
+    chArs = chebars(yf,y,D1,De,Do) # for
     #
-    # Get (dim'less) velocity and reduced (to half domain) velocity
-    if h==0.0
-        w  = (ξ₀-1)^-4 .* ( (y .+ ξ₀/(ξ₀-1)).^-4 - (y .- ξ₀/(ξ₀-1)).^-4 )
-    else
-        aa = 0.711557; bb = -7.58607
-        xL = y * (ξ₀-1) .+ ξ₀
-        xR = y * (ξ₀-1) .- ξ₀
-        wL = (xL.^4 + aa*h.*abs.(xL).^3 + bb*h^2*xL.^2).^-1
-        wR = (xR.^4 + aa*h.*abs.(xR).^3 + bb*h^2*xR.^2).^-1
-        w  = wL - wR
-    end
-    wr = w[1:nn]
+    # Get (dim'less) velocity:
+    w = getw.(y,ℓ₀; hrel)
     #
-    # Form full A matrix. Could use sparse matrix for diagm() but not really needed honestly; we are just constructing
-    # the matrix, and memory is not an issue.
-    A = diagm((1+β) .-wr.^2) * De
+    # Get "A" and "a"
+    σ = ones(nn); # just to start
+    (Ar,a) = getA(De,σ,w,β,γ)
     #
-    # Get reduced A and column a.
-    Ar = A[:,2:end-1]
-    a  = A[:,end]
-    @assert size(Ar) == (nn,nn-2)
-    @assert size(a) == (nn,)
-    #
-    # Repeat for B1.
+    # Get "B" and "b"
     τ = X₀^(-1/8)
-    print("Dimless relaxation time: $τ\n")
-    B1 = diagm(wr) ./ (ξ₀-1) ./ τ
-    B1r = B1[:,2:end-1]
-    b1  = B1[:,end]
-    @assert size(B1r) == (nn,nn-2)
-    @assert size(b1) == (nn,)
+    (Br,b) = getB(Do,σ,w,β,τ,ℓ₀)
     #
-    # And B2.
-    B2 = 2 * diagm(wr) * diagm(Do*wr)
-    B2r = B2[:,2:end-1]
-    b2  = B2[:,end]
-    @assert size(B2r) == (nn,nn-2)
-    @assert size(b2) == (nn,)
-    #
-    # Now solve.
-    Br = B1r + B2r
-    b  = b1  + b2
-    σ = (Ar - Br) \ (b - a)
-    #
-    # And return.
-    yr = y[1:nn]
-    σ = [0, σ..., 1]
-    σσ = [0, σ...] # for plotting purposes
-    ξ = ξ₀ .- yr * (ξ₀-1)
-    ξξ = [0, ξ...] # for plotting purposes
-    ΞΞ = ξξ / ξvisc
-    return ring(X₀,ξ₀,N,β,nn,wr,ξξ,ΞΞ,σσ,Ar,a,Br,b,γ)
+    ar = aring(X₀, ℓ₀, N, nn, β, γ, chArs, w, σ, Ar, a, Br, b)
+    iterate!(ar)
+    return ar
 end
 
-function getA!(r::ring)
-    N = r.N; σ = r.σ[2:end]; β = r.β; wr = r.wr; γ=r.γ
-    (y,DM,DeM,DoM) = chebdif(N,1)
-    D1 = DM[:,:,1]   # full derivative matrix
-    De = DeM[:,:,1]  # derivative of even function
-    Do = DoM[:,:,1]  # derivative of odd function
-    #
-    A = diagm((1+β)*σ.^(β+γ) .- wr.^2) * De
-    #
-    r.Ar = A[:,2:end-1]
-    r.a  = A[:,end]
-    return 0
-end
 
-function getB!(r::ring)
-    if r.γ == 0
-        return 0
-    else
-        N = r.N; σ = r.σ[2:end]; β = r.β; wr = r.wr
-        (y,DM,DeM,DoM) = chebdif(N,1)
-        D1 = DM[:,:,1]   # full derivative matrix
-        De = DeM[:,:,1]  # derivative of even function
-        Do = DoM[:,:,1]  # derivative of odd function
-        #
-        τ = r.X₀^(-1/8)
-        B1 = diagm(wr.*σ.^γ) ./ (ξ₀-1) ./ τ
-        B1r = B1[:,2:end-1]
-        b1  = B1[:,end]
-        #@assert size(B1r) == (nn,nn-2)
-        #@assert size(b1) == (nn,)
-        #
-        # And B2.
-        B2 = 2 * diagm(wr) * diagm(Do*wr)
-        B2r = B2[:,2:end-1]
-        b2  = B2[:,end]
-        #@assert size(B2r) == (nn,nn-2)
-        #@assert size(b2) == (nn,)
-        #
-        # Now solve.
-        Br = B1r + B2r
-        b  = b1  + b2
-        r.Br=Br; r.b=b
-    end
-    return 0
-end
-
-function iterate!(r::ring)
-    getA!(r)
-    Br = r.Br;  Ar = r.Ar;  b = r.b;  a = r.a;
-    σ = (Ar - Br) \ (b - a)
-    r.σ = [0, 0, σ..., 1]
-    return 0
-end
-
-#(X₀,ξ₀,N,β=1.0)
-
-struct rring
-    r::ring
+struct ring
+    ar::aring
     moon::Tuple # mass, a0
     disk::Tuple # nu, srel
     X₀::Float64 # fundamental parameter
@@ -171,35 +204,36 @@ struct rring
     γ::Float64
     Lset::Tuple # lengthscales
     gap::Tuple # width, Δwidth
+    h::Float64  # Hill radius
 end
-function rring(m,β,γ;N=1000,a0=1.0e10,ν=1.0,srel=30,ξ₀=10,h=0.0)
-#    function gimmearing(m,ν=1.0,srel=30,β=2,a₀=100Mm,N=1000,ξ₀=10;γ=0)
-        function Ω(a₀)
-            return √(G*M♄/a₀^3)
-        end
-        a₀=a0
-        Ω = Ω(a₀)
-        α = A₁^2 / 18π * Ω * (m/M♄)^2 * a₀^5
-        s₀ = srel / Ω
-        κ₀ = 3ν
-        X₀ = α^2/κ₀^5/s₀^3
-#        return
-    r = ring(X₀,ξ₀,N,β,γ;h=h)
+function ring(m,β,γ;N=1000,a0=1.0e10,ν=1.0,srel=30,ξ₀=10)#,h=0.0)
+    function Ω(a₀)
+        return √(G*M♄/a₀^3)
+    end
+    a₀=a0
+    Ω = Ω(a₀)
+    α = A₁^2 / 18π * Ω * (m/M♄)^2 * a₀^5
+    s₀ = srel / Ω
+    κ₀ = 3ν
+    X₀ = α^2/κ₀^5/s₀^3
+    h = a0 * (m/3/M♄)^(1/3) # Hill radius (in physical units, i.e. cm).
+
     Lvisc = (α/κ₀)^(1/3)
     w₀ = √(κ₀/s₀)
     Lcrit = (α/w₀)^(1/4)
     Lαs = (α*s₀)^0.2          # another lengthscale constructed from α, ν, s
     Lκs = √(κ₀*s₀)
     Lset = (Lvisc,Lcrit,Lαs,Lκs)
-#    end
-#    r = gimmering(m,ν,srel,β,a₀,N,ξ₀=10)
+
+    ar = aring(X₀,ξ₀,N,β,γ; hrel=h/Lcrit)
+
     for i in 1:5
         iterate!(r)
     end
     # Smooth:
     r.σ = conv(r.σ,[1,4,6,4,1]./16)[3:end-2]
     #
-    #=
+
     i10 = findfirst(x->x>0.1,r.σ)
     ξ10 = r.ξ[i10]
 
@@ -211,78 +245,11 @@ function rring(m,β,γ;N=1000,a0=1.0e10,ν=1.0,srel=30,ξ₀=10,h=0.0)
 
     width = 2*(ξ50 * Lcrit)
     Δwidth = 2*(ξ90-ξ10)*Lcrit
-    =#
-    width=(0.0,0.0)
-    Δwidth=(0.0,0.0)
-    return rring(r,(m,a0),(ν,srel),X₀,β,γ,Lset,(width,Δwidth))
+    #width=(0.0,0.0)
+    #Δwidth=(0.0,0.0)
+    h*=0
+    return rring(r,(m,a0),(ν,srel),X₀,β,γ,Lset,(width,Δwidth,2*ξ90*Lcrit,2*ξ10*Lcrit),h)
     # Get 10%, 50%, 90% points
 end
 
-function encke()
-    gimmearing(4.95e18,)
-end
-
 end#module
-
-#=
-function ring(N)
-    nn = N÷2 + N%2  # nn: "non-negative" (positions)
-    # Get key physical parameters, and lengthscales to non-dimensionalize X-axis.
-    α = params[1]; ν = params[2]; s = params[3]; Lrel = params[4] # velocity amplitude, kinematic viscosity, relaxation time, Lrel = L/Lc
-    q = 3*ν/s; κ = 3*ν
-    NX = α^2/κ^5/s^3
-    parmd = Dict("α"=>α, "ν"=>ν, "s"=>s, "q"=>q, "κ"=>κ, "Lrel"=>Lrel, "X"=>NX)
-    pa = sort(collect(parmd),by=x->x[2])
-    for p in pa
-        print("$p\n")
-    end
-    #
-    Lc = (α/√q)^0.25        # position of critical point for hyperbolic transport (could call it "L0" I suppose)
-    Lv = (α/κ)^(1.0/3.0) # viscous "critical" point
-    Lαs = (α*s)^0.2          # another lengthscale constructed from α, ν, s
-    Lνs = √(ν*s)             # another lengthscale      "        "    "   "
-    L0 = Lrel*max(Lc,Lv)
-    L = L0-Lc
-    Ls = Dict("Lcrit"=>Lc, "Lvisc"=>Lv, "Lαs"=>Lαs, "Lνs"=>Lνs, "L"=>L, "L0"=>L0)
-    a = sort(collect(Ls),by=x->x[2]) # this is a bit ugly... ugh
-    for e in a
-        print("$e\n")
-    end
-    #
-
-
-    xnn = x[1:nn]
-    y = (L+EXTEND*Lc)*x
-    ynn = y[1:nn]
-
-    u = (α ./ (y.+L0).^4 ) - (α ./ (y.-L0).^4)
-    unn = u[1:nn]
-
-    A = [ Do   0*De  ; 0*Do    De]./(L-Lc)
-    AA = A*diagm([unn;unn])
-    #DeD = De*diagm()
-    B = [ 0*De  -Do  ;  -(κ/s)*De   -(1/s)*diagm(ones(nn))]
-
-    Af = [D1  0*D1 ; 0*D1 D1]./(L-Lc)
-    AAf = Af*diagm([u;u])
-    Bf =  [0*D1   -D1 ; -(κ/s)*D1   -(1/s)*diagm(ones(N)) ]
-
-    # done.
-    return ring(N,nn,parmd,Ls,y,u,A,AA,B,D1,De,Do,Af,AAf,Bf)
-end
-
-function setκ!(r::ring,Σ::Array{Float64,1},β::Float64)
-    s = r.parmd["s"]; κ = r.parmd["κ"]
-    Deκ = r.De * diagm(Σ.^β)
-    B = [ 0*r.De  -r.Do  ;  -(κ/s)*Deκ   -(1/s)*diagm(ones(r.nn))]
-    r.B = B
-end
-
-function Xs(α,κ,s)
-    Lc = (α^2 * s / κ)^(1/8)
-    Lv = (
-end
-end#module
-
-
-=#

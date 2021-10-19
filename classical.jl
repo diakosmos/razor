@@ -19,7 +19,8 @@ function visco(Σrel,β)
 end
 
 """
-A planetary particulate disk is called a "ring", but this terminology is confusing.
+Potentially confusing terminology: a planetary particulate disk is called a "ring",
+not a disk.
 """
 mutable struct ring
 #    α::Float64

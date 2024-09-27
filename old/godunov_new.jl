@@ -60,7 +60,9 @@ function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0)
     ΔX_ = diff(X_)
     #
     # Set speed and divergence of same
-    U_ = α ./ X_.^4;    U_ .-= U_[end]  # subtract off tiny bit, uniformly, to make U=0 on right boundary
+    #U_ = α ./ X_.^4;    U_ .-= U_[end]  # subtract off tiny bit, uniformly, to make U=0 on right boundary
+    X2_ = 2 * X_[end] .- X_
+    U_ = α ./ X_.^4 - α ./ X2_.^4 
     ∇U_ = diff(U_) ./ ΔX_
     #
     # Initialize mass density by making it uniform, with total mass = 1.0

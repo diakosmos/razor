@@ -1,4 +1,18 @@
 module Godunov
+"""
+GodunovFull: "Full" means that we allow the eigenvectors to depend upon position,
+b/c we are treating the "full" problem in which the viscosity ν (and therefore the diffusion D)
+and the relaxation time s are not fixed, but depend upon density Σ, in the form of 
+a power-law. This makes the problem more difficult, b/c the Godunov eigenvectors now 
+depend upon Σ, which changes as a function of time and location.
+
+Futhermore, we allow for the possibility that U is a function of time. The intent is to play
+with either letting it be independent of time (as before), representing the time-averaged forcing
+over a full relative orbit, or to try some method of incorporating the time-dependence of the forcing.
+That's tricky, though, b/c the time between successive forcings depends on how far removed you are,
+radially, from the moon.
+"""
+
 using LinearAlgebra
 
 TINY = 0.5 # how much to shrink the timestep 1.0 is CFL (supposedly, anyway)
@@ -27,22 +41,21 @@ mutable struct ring
     Φ_::Array{Float64,1}    # mass flux
     F_::Array{Float64,1}    # integral of the above
 
-    r₊::Array{Float64,1}    # 2-component eigenvector, right-travelling wave (relative to fluid) [NB: independent of position]
-    r₋::Array{Float64,1}    # 2-component eigenvector, left-travelling wave (relative to fluid) [NB: independent of position]
+    r₊::Array{Float64,1}    # 2-component eigenvector, right-travelling wave (relative to fluid) [NB: dependent on time & position]
+    r₋::Array{Float64,1}    # 2-component eigenvector, left-travelling wave (relative to fluid) [NB: dependent on time & position]
 
     λ₊●::Array{Float64,1}    # eigenvalues, right-travelling (relative to fluid) wave
     λ₋●::Array{Float64,1}    # eigenvalues, left-travelling (relative to fluid) wave
 
     α⁺_::Array{Float64,1}    # right-traveling amplitude in eigenvector decomposition
     α⁻_::Array{Float64,1}    # left
-    Δα⁺●::Array{Float64,1}    # right-traveling amplitude in eigenvector decomposition
-    Δα⁻●::Array{Float64,1}    # left
+
 
     Δt::Float64             # time step
     t::Float64              # time counter
     i::Integer              # iteration counter
 end
-function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0)
+function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0, xexp=XEXP)
     # Get key physical parameters, and lengthscales to non-dimensionalize X-axis.
     α = params[1]; ν = params[2]; s = params[3] # velocity amplitude, kinematic viscosity, relaxation time
     q = 3*ν/s; D = 3*ν
@@ -52,20 +65,23 @@ function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0)
     Lv = (α/(3ν))^(1.0/3.0) # viscous "critical" point
     L2 = (α*s)^0.2          # another lengthscale constructed from α, ν, s
     L3 = √(ν*s)             # another lengthscale      "        "    "   "
-    Ls = Dict("Lcrit"=>Lc, "Lvisc"=>Lv, "L2"=>L2, "L3"=>L3)
+    X = α^2 / (3ν)^5 / s^3
+    Ls = Dict("Lcrit"=>Lc, "Lvisc"=>Lv, "L2"=>L2, "L3"=>L3, "X"=>X)
     a = sort(collect(Ls),by=x->x[2]) # this is a bit ugly... ugh
     for e in a
         print("$e\n")
     end
     #
     # Set X positions (nodes):
-    x = XEXP; y=1.0/x # exponents to space-out nodes by power law
-    xi = xir *Lc; xf = xfr*Lc
+    x = xexp; y=1.0/x # exponents to space-out nodes by power law
+    xi = xir *Lc; xf = xfr*Lv
     X● = collect(range(xi^y,xf^y,length=N+1)).^x
     ΔX_ = cat(1.0,diff(X●),1.0,dims=1) # includes unit-width ghost cells
     #
     # Set speed and divergence of same
-    U● = α ./ X●.^4;    U● .-= U●[end]  # subtract off tiny bit, uniformly, to make U=0 on right boundary
+    #U● = α ./ X●.^4;    U● .-= U●[end]  # subtract off tiny bit, uniformly, to make U=0 on right boundary
+    X2● = 2 * X●[end] .- X●
+    U● = α ./ X●.^4 - α ./ X2●.^4   
     #∇U_ = diff(U_) ./ ΔX_
     #
     # Initialize mass density by making it uniform, with total mass = 1.0
@@ -104,7 +120,7 @@ function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0)
     Δα⁺● = zeros(N+1)
     Δα⁻● = zeros(N+1)
     r = ring(N,parmd,Ls,X●,ΔX_,U●,Σ_,S_,Φ_,F_,r₊,r₋,λ₊●,λ₋●,
-        α⁺_,α⁻_,Δα⁺●,Δα⁻●,Δt,0.0,0)
+        α⁺_,α⁻_,Δt,0.0,0)
     getAlphas!(r)
     #
     # done.
@@ -112,7 +128,7 @@ function ring(N=20, params=(1.0,1.0,1.0); xir = 0.95, xfr = 3.0)
 end
 
 function getAlphas!(r::ring)
-    N=r.N; Σ_ = r.Σ_; Φ_ = r.Φ_; α⁺_ = r.α⁺_; α⁻_ = r.α⁻_; Δα⁺●=r.Δα⁺●; Δα⁻●=r.Δα⁻●
+    N=r.N; Σ_ = r.Σ_; Φ_ = r.Φ_; α⁺_ = r.α⁺_; α⁻_ = r.α⁻_;
     q = r.parmd["q"]
     #=ΔΣ● = cat(Σ_[1]-0.0, diff(Σ_),        0.0, dims=1) # reflective bc on rt
     ΔΦ● = cat(Φ_[1]-0.0, diff(Φ_), -Φ_[end], dims=1) # reflective bc w/sign flip
@@ -128,8 +144,6 @@ function getAlphas!(r::ring)
     α⁺_[N+2] = 0.5 * [1  1/√q] ⋅ [Σ_[N+1], -Φ_[N+1]]
     α⁻_[N+2] = 0.5 * [1 -1/√q] ⋅ [Σ_[N+1], -Φ_[N+1]]
 
-    Δα⁺● = diff(α⁺_) # I don't think I need this actually
-    Δα⁻● = diff(α⁻_) # ditto
 
     if CROP
         for j in 2:N+1
@@ -142,8 +156,6 @@ function getAlphas!(r::ring)
 
     r.α⁺_ = α⁺_
     r.α⁻_ = α⁻_
-    r.Δα⁺●= Δα⁺●
-    r.Δα⁻●= Δα⁻●
 end#function
 
 """
@@ -173,7 +185,9 @@ end
 
 function step!(r::ring; Δt=r.Δt)
     N=r.N; Σ_=r.Σ_; ΔX_=r.ΔX_; S_=r.S_; Φ_=r.Φ_; F_=r.F_;
-    λ₊●=r.λ₊●; λ₋●=r.λ₋●; α⁺_ = r.α⁺_; α⁻_ = r.α⁻_; Δα⁺●=r.Δα⁺●; Δα⁻●=r.Δα⁻●
+    λ₊●=r.λ₊●; λ₋●=r.λ₋●; α⁺_ = r.α⁺_; α⁻_ = r.α⁻_;
+    X● = r.X●
+
     s = r.parmd["s"]
 
     getAlphas!(r)
@@ -192,8 +206,12 @@ function step!(r::ring; Δt=r.Δt)
     reconstruct!(r)#,α⁺_,α⁻_)
 
     """ RHS: """
-
     Φ_ ./= (1 .+ Δt/s)
+
+    X_ = X●[1:end-1] + X●[2:end]
+    factor_ = 4 * r.parmd["α"] ./ X_.^3
+    Σ_[2:end-1] .*= (1 .+ Δt .* factor_)
+    Φ_[2:end-1] .*= (1 .+ Δt .* factor_)
 
     # Finish up, renormalize
     Σ_ .*= (Σ_.≥0)

@@ -6,15 +6,15 @@ fig = Plots.plot()
 # Physical parameters:
 α = 1.0
 ν = 1.0
-s = 0.001
+s = 10.01
 
 # Other params:
-Nc = 40 # no of cells
+Nc = 80 # no of cells
 tmax = 1.0e2 # max time
 dt = 3.0e1 # how often to plot
 tp = 0.0e0#5000 # when to start plotting
 
-r=Godunov.ring(Nc, (α,ν,s))
+r=Godunov.ring(Nc, (α,ν,s);xfr=3.0)
 Godunov.step!(r)
 
 xh = r.Ls["Lcrit"]

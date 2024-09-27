@@ -42,9 +42,9 @@ mutable struct ring
 #    νᵐ::Any
 end
 function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
-    xtemp_ = collect(range(xi,xf,length=N+1))
+    xtemp_ = collect(range(xi,xf,length=N+1))#[1:end-1]
     X_ = xtemp_[2:end]
-    U_ = 1.0 ./ X_.^4
+    U_ = 1.0 ./ X_.^4  - 1.0 ./ (((1.3xf+xi).-X_).^4)
     ΔX_ = diff(xtemp_)
     x_ = 0.5*(xtemp_[1:end-1]+xtemp_[2:end]) # midpoints
     σ_ = ones(N)
@@ -59,7 +59,7 @@ function ring(N=5;β=0,xf=3.0,xi=0.01)#10*xf/N)
     Gᵐ = 3 * Dᵐ * Kᵐ * νᵐ
     μ_ = Mᵐ * σ_ # mass (per azimuthal length) in annulus
     ΔtVN = 0.5 * minimum(diff(X_).^2 ./ diag(νᵐ)[1:end-1] )
-    ΔtADV = minimum(ΔX_ ./ U_)
+    ΔtADV = minimum(abs.(ΔX_ ./ U_))
     ΔtMAX = min(ΔtVN,ΔtADV)
     return ring(N,β,ΔtMAX,X_,ΔX_,U_,x_,σ_,Gᵐ)#,μ_)
 end

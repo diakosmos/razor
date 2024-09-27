@@ -10,6 +10,8 @@ UNITS: cgs
 """
 
 ASSERT = true # for debugging purposes: include "@assert" statements
+INSIDE = true # where to put diffusion constant: ∂ₓ(κΣ), or κ∂ₓΣ?
+TRUNCU = false # whether to truncate the correction to the Goldreich-Tremaine velocity factor
 
 # Consts
 G  = 6.67430e-8 # Gravitational constant, cgs
@@ -46,8 +48,8 @@ mutable struct aring # an abstract, idealized 1D (in r) ring, with periodic BC's
     N::Integer   # number of nodes for a full ring
     nn::Integer  # number of nodes for a half-ring (N÷2 + N%2)
     #
-    #ξ::Array{Float64}  # position x normalized to Lcrit
-    #Ξ::Array{Float64}  # position x normalized to Lvisc
+    ξ::Array{Float64}  # position x normalized to Lcrit
+    Ξ::Array{Float64}  # position x normalized to Lvisc
     #
     β::Float64 # exponent for σ-dependence of viscosity (and diffusivity)
     γ::Float64 # exponent for σ-dependence of relaxation rate 1/s
@@ -60,19 +62,26 @@ mutable struct aring # an abstract, idealized 1D (in r) ring, with periodic BC's
     a::Any
     Br::Any
     b::Any
+    σ0::Array{Float64} # previous σ
 end
 
 """
 Functions for getting "A" matrix and "a" vector.
 """
-function getA(De,σ,w,β,γ)#;hrel=0.0)
-    A  = diagm((1+β)*σ.^(β+γ) .- w.^2) * De
+function getA(De,σ,w,β,γ,σ0)#;hrel=0.0)
+    if INSIDE
+        f = 1.0 + β
+    else
+        f = 1.0
+    end
+    σσ = 0.5 * σ + 0.5 * σ0
+    A  = diagm(f*abs.(σ).^(β+γ) .- w.^2) * De
     Ar = A[:,2:end-1]
     a  = A[:,end]
     return (Ar,a)
 end
 function getA!(r::aring)
-    (r.Ar,r.a) = getA( r.chArs.De , r.σ , r.w , r.β , r.γ )
+    (r.Ar,r.a) = getA( r.chArs.De , r.σ , r.w , r.β , r.γ , r.σ0)
 end
 
 """
@@ -80,7 +89,8 @@ Functions for getting "B" matrix and "b" vector.
 """
 function getB(Do,σ,w,γ,ℓ₀,τ)
     # Get B1.
-    B1 = diagm(w.*σ.^γ) ./ (ℓ₀-1) ./ τ
+    σσ = σ
+    B1 = diagm(w.*abs.(σσ).^γ) ./ (ℓ₀-1) ./ τ
     B1r = B1[:,2:end-1]
     b1  = B1[:,end]
     # And B2.
@@ -119,7 +129,11 @@ function getw(y,ℓ₀ ; hrel=0.0) # -1 ≤ y ≤ 1
     else
         aa = 0.711557; bb = -7.58607 # Constants given by Grätz, Seiß & Spahn (2018), p. 3.
         function g(hox)
-            min(1/2.5,abs(hox))
+            if TRUNCU
+                min(1/2.5,abs(hox))
+            else
+                abs(hox)
+            end
         end
         function f(hox)
             (1+ aa*g(hox) + bb*g(hox)^2)^(-1)
@@ -137,18 +151,31 @@ function getw!(ar::aring ; hrel::Real=0.0)
     #ar.w = w[1:ar.nn]
 end
 
+function shortiterate!(ar::aring)
+    σ = (ar.Ar - ar.Br) \ (ar.b - ar.a)
+    σ .*= (σ .> 0) # Seeing if this helps kill Gauss oscillations
+    σ = sort(σ) # playing around...
+    ar.σ = [0, σ..., 1]
+    #ar.σ = σ
+    #
+    return 0
+end
+
 function iterate!(ar::aring; hrel=0.0)
     getw!(ar; hrel)
     getA!(ar)
     getB!(ar)
     # Solve:
     nn= ar.nn
-    print(size(ar.Ar))
-    @assert size(ar.Ar) == (nn,nn-2)
-    @assert size(ar.a) == (nn,)
-    @assert size(ar.Br) == (nn,nn-2)
-    @assert size(ar.b) == (nn,)
+    if ASSERT
+        @assert size(ar.Ar) == (nn,nn-2)
+        @assert size(ar.a) == (nn,)
+        @assert size(ar.Br) == (nn,nn-2)
+        @assert size(ar.b) == (nn,)
+    end
     σ = (ar.Ar - ar.Br) \ (ar.b - ar.a)
+    σ .*= (σ .> 0) # Seeing if this helps kill Gauss oscillations
+    σ = sort(σ) # playing around...
     ar.σ = [0, σ..., 1]
     #ar.σ = σ
     #
@@ -183,13 +210,15 @@ function aring(X₀,ℓ₀,N,β,γ; hrel=0.0) # h is the Hill radius in units of
     #
     # Get "A" and "a"
     σ = ones(nn); # just to start
-    (Ar,a) = getA(De,σ,w,β,γ)
+    (Ar,a) = getA(De,σ,w,β,γ,σ)
     #
     # Get "B" and "b"
     τ = X₀^(-1/8)
     (Br,b) = getB(Do,σ,w,β,τ,ℓ₀)
     #
-    ar = aring(X₀, ℓ₀, N, nn, β, γ, chArs, w, σ, Ar, a, Br, b)
+    ξ = ℓ₀ .- y * (ℓ₀-1)
+    Ξ = ξ * X₀^(-1/24)
+    ar = aring(X₀, ℓ₀, N, nn, ξ, Ξ, β, γ, chArs, w, σ, Ar, a, Br, b, σ)
     iterate!(ar)
     return ar
 end
@@ -204,7 +233,7 @@ struct ring
     γ::Float64
     Lset::Tuple # lengthscales
     gap::Tuple # width, Δwidth
-    h::Float64  # Hill radius
+    hrel::Float64  # Hill radius, relative to Lcrit
 end
 function ring(m,β,γ;N=1000,a0=1.0e10,ν=1.0,srel=30,ξ₀=10)#,h=0.0)
     function Ω(a₀)
@@ -227,28 +256,33 @@ function ring(m,β,γ;N=1000,a0=1.0e10,ν=1.0,srel=30,ξ₀=10)#,h=0.0)
 
     ar = aring(X₀,ξ₀,N,β,γ; hrel=h/Lcrit)
 
-    for i in 1:5
-        iterate!(r)
-    end
+
     # Smooth:
-    r.σ = conv(r.σ,[1,4,6,4,1]./16)[3:end-2]
-    #
+    jmax = 20
+    for j in 1:jmax
+        iterate!(ar; hrel=h/Lcrit * j/jmax)
+        ar.σ = conv(ar.σ,[1,4,6,4,1]./16)[3:end-2]
+        ar.σ[end-3:end].=1.0
+    end
+    for i in 1:5
+        iterate!(ar; hrel=h/Lcrit)
+    end
 
-    i10 = findfirst(x->x>0.1,r.σ)
-    ξ10 = r.ξ[i10]
+    i10 = findfirst(x->x>0.1,ar.σ)
+    ξ10 = ar.ξ[i10]
 
-    i50 = findfirst(x->x>0.5,r.σ)
-    ξ50 = r.ξ[i50]
+    i50 = findfirst(x->x>0.5,ar.σ)
+    ξ50 = ar.ξ[i50]
 
-    i90 = findfirst(x->x>0.9,r.σ)
-    ξ90 = r.ξ[i90]
+    i90 = findfirst(x->x>0.9,ar.σ)
+    ξ90 = ar.ξ[i90]
 
     width = 2*(ξ50 * Lcrit)
     Δwidth = 2*(ξ90-ξ10)*Lcrit
     #width=(0.0,0.0)
     #Δwidth=(0.0,0.0)
-    h*=0
-    return rring(r,(m,a0),(ν,srel),X₀,β,γ,Lset,(width,Δwidth,2*ξ90*Lcrit,2*ξ10*Lcrit),h)
+
+    return ring(ar,(m,a0),(ν,srel),X₀,β,γ,Lset,(width,Δwidth,2*ξ90*Lcrit,2*ξ10*Lcrit),h/Lcrit)
     # Get 10%, 50%, 90% points
 end
 

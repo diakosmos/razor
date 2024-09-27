@@ -1,20 +1,23 @@
-include("godunov_3.jl")
-using .Godunov
+include("godunov_full_.jl");   using .GodunovFull
+#include("godunov_full_.jl");   using .GodunovFull 
+Godunov = GodunovFull
 using Plots
 fig = Plots.plot()
 
 # Physical parameters:
-α = 1.0
-ν = 1.0
-s = 0.01
+#α = 1.0
+#ν = 1.0 /3
+#s = 1.0
 
 # Other params:
-Nc = 40 # no of cells
-tmax = 1.0e1 # max time
-dt = 1.0e0 # how often to plot
+Nc = 120 # no of cells
+tmax = 5.0e0 # max time
+dt = 1.5e0 # how often to plot
 tp = 0.0e0#5000 # when to start plotting
 
-r=Godunov.ring(Nc, (α,ν,s), xfr=3.0)
+r=Godunov.ring(Nc)
+fig0 = Plots.plot(r.Σ_)
+display(fig0)
 Godunov.step!(r)
 
 xh = r.Ls["Lcrit"]
@@ -29,11 +32,11 @@ for tt in 0.0:dt:tmax
     if tx ≥ tp
         ΣΣ_ = cat(Σ_[2:end-1], reverse(Σ_[2:end-1]),dims=1)
         ΦΦ_ = cat(Φ_[2:end-1],-reverse(Φ_[2:end-1]),dims=1)
-        Plots.plot!(xx_./xv,ΣΣ_,label="t: $tx",legend=false,xlim=(0,2*r.X●[end]/xv),ylim=(0,1.2*maximum(ΣΣ_)))#:bottomright)#,title="Σ")#;legend=false)
+        Plots.plot!(xx_./xv,ΣΣ_./maximum(ΣΣ_),label="t: $tx",legend=false,xlim=(0,2*r.X●[end]/xv),ylim=(0,1.2))#*maximum(ΣΣ_)))#:bottomright)#,title="Σ")#;legend=false)
         display(fig)
         print("time: $tx\n")
-#        Plots.plot!(xx_,ΦΦ_,label=false,linestyle=:dash)#,label="t: $t",legend=:topleft)#,title="J")#;legend=false)
-#        display(fig)
+        #Plots.plot!(xx_./xv,ΦΦ_./maximum(ΦΦ_),label=false,linestyle=:dash)#,label="t: $t",legend=:topleft)#,title="J")#;legend=false)
+        #display(fig)
     end
 #    for j in 1:800
 #        Godunov.step!(r)#,dt)

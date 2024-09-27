@@ -19,15 +19,15 @@ print("Method: $method\n")
 
 normby = "sum" #true
 
-FACTOR = 0.1
+FACTOR = 1
 
 α= 1.0    * FACTOR
-ν = 1.0/3   * FACTOR * 9
-s = 1.0   * FACTOR * 0.3
+ν = 1.0/3   * FACTOR 
+s = 1.0e-6   * FACTOR 
 Lrel = 5
 
 #N=40
-N = floor(Int, 73) #64 / √2) # floor(Int, 73 * √2)
+N = floor(Int, 33) #4 / √2) # floor(Int, 73 * √2)
 
 M = 500.0
 nMx=0
@@ -124,7 +124,7 @@ for i in 1:trunc(Int,1000*Np)#NNN)
     global v
     local w
     if method=="Explicit"
-        w = [abs.(v[1:nn]); -abs.(v[nn+1:end])]; w[1]=0.0; w[nn+1]=0.0; # w./=sum(w[1:nn]);
+        w = [abs.(v[1:nn]); -abs.(v[nn+1:end])]; w[1]=1.0; w[nn+1]=-1.0/√(r.parmd["q"]); # w./=sum(w[1:nn]);
         if normby=="max"
             w./=maximum(w[1:nn])
         elseif normby=="sum"
